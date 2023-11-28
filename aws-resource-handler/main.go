@@ -1,7 +1,7 @@
 package main
 
-import "cloud-resource-scheduler/aws-resource-handler/queue"
+import "weather-report/aws-resource-handler/queue"
 
 func main() {
-	queue.PrintMessages()
+	queue.Run()
 }

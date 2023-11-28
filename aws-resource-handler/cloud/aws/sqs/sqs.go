@@ -1,7 +1,7 @@
 package sqs
 
 import (
-	"cloud-resource-scheduler/aws-resource-handler/cloud/aws"
+	"weather-report/aws-resource-handler/cloud/aws"
 	"errors"
 	"os"
 	"context"
@@ -26,7 +26,7 @@ func GetMessages() (*[]types.Message, error) {
 	}
 	sqsRequest := sqs.ReceiveMessageInput{
 		QueueUrl: &queueUrl,
-		MaxNumberOfMessages: 5,
+		MaxNumberOfMessages: 10,
 	}
 	sqsClient, err := getClient()
 	if err != nil {
