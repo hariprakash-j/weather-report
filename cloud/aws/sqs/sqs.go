@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
-	"weather-report/aws-resource-handler/cloud/aws"
+	"weather-report/cloud/aws"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"

@@ -7,13 +7,14 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"weather-report/aws-resource-handler/cloud/aws/sqs"
+	"weather-report/cloud/aws/sqs"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
+
 func fetchMessages(c <-chan os.Signal) {
 	messagesChannel := make(chan types.Message, 20)
-	for i := 0; i <5; i++ {
+	for i := 0; i < 5; i++ {
 		go processMessage(messagesChannel)
 	}
 
@@ -35,13 +36,12 @@ func fetchMessages(c <-chan os.Signal) {
 				slog.Error("unable to get messages: ", err)
 			}
 			if len(*messages) > 0 {
-				for _,message := range *messages {
+				for _, message := range *messages {
 					messagesChannel <- message
 				}
 			}
 		}
 	}
-
 }
 
 func processMessage(messages <-chan types.Message) {
@@ -69,7 +69,7 @@ func syncProcessor(c <-chan os.Signal) {
 				slog.Error("unable to get messages: ", err)
 			}
 			if len(*messages) > 0 {
-				for _,message := range *messages {
+				for _, message := range *messages {
 					fmt.Println(*message.Body)
 					err := sqs.DeleteMessage(message.ReceiptHandle)
 					if err != nil {
@@ -81,7 +81,6 @@ func syncProcessor(c <-chan os.Signal) {
 	}
 }
 
-			
 func Run() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
