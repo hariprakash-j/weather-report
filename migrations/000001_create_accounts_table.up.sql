@@ -28,7 +28,7 @@ CREATE TYPE aws_account_type AS ENUM ('development', 'staging', 'production');
 
 CREATE TABLE aws_account (
 	account_id VARCHAR(12) PRIMARY KEY,
-	accunnt_type aws_account_type NOT NULL,
+	account_type aws_account_type NOT NULL,
 	default_profile INT REFERENCES scheduler_profile(profile_id)
 );
 
