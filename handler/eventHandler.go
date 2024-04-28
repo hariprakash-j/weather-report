@@ -1,10 +1,11 @@
-package queue
+package handler
 
 import (
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"reflect"
 	"syscall"
 	"time"
 	"weather-report/cloud/aws/sqs"
@@ -12,10 +13,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-func fetchMessages(c <-chan os.Signal) {
+type EventHandler struct {
+	subscribers         []Subscriber
+	MaxProcessorThreads int
+}
+
+func (e *EventHandler) fetchMessages(c <-chan os.Signal) {
 	messagesChannel := make(chan types.Message, 20)
-	for i := 0; i < 5; i++ {
-		go processMessage(messagesChannel)
+	for i := 0; i < e.MaxProcessorThreads; i++ {
+		go e.Notify(messagesChannel)
 	}
 
 	for {
@@ -44,7 +50,28 @@ func fetchMessages(c <-chan os.Signal) {
 	}
 }
 
-func processMessage(messages <-chan types.Message) {
+func (e *EventHandler) Register(sub Subscriber) error {
+	for _, s := range e.subscribers {
+		if reflect.DeepEqual(sub, s) {
+			return fmt.Errorf("subscriber already exists")
+		}
+	}
+	e.subscribers = append(e.subscribers, sub)
+	return nil
+}
+
+func (e *EventHandler) DeRegister(sub Subscriber) error {
+	for i, s := range e.subscribers {
+		if reflect.DeepEqual(sub, s) {
+			e.subscribers[i] = e.subscribers[len(e.subscribers)-1]
+			e.subscribers = e.subscribers[:len(e.subscribers)-1]
+			return nil
+		}
+	}
+	return fmt.Errorf("subscriber not found")
+}
+
+func (e *EventHandler) Notify(messages <-chan types.Message) {
 	for {
 		select {
 		case message := <-messages:
@@ -58,32 +85,9 @@ func processMessage(messages <-chan types.Message) {
 	}
 }
 
-func syncProcessor(c <-chan os.Signal) {
-	for {
-		select {
-		case <-c:
-			return
-		default:
-			messages, err := sqs.GetMessages()
-			if err != nil {
-				slog.Error("unable to get messages: ", err)
-			}
-			if len(*messages) > 0 {
-				for _, message := range *messages {
-					fmt.Println(*message.Body)
-					err := sqs.DeleteMessage(message.ReceiptHandle)
-					if err != nil {
-						slog.Error("unable to process the message: ", err)
-					}
-				}
-			}
-		}
-	}
-}
-
-func Run() {
+func (e *EventHandler) Run() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
-	fetchMessages(c)
+	e.fetchMessages(c)
 	defer close(c)
 }

@@ -1,7 +1,10 @@
 package main
 
-import "weather-report/queue"
+import "weather-report/handler"
 
 func main() {
-	queue.Run()
+	handler := handler.EventHandler{
+		MaxProcessorThreads: 10,
+	}
+	handler.Run()
 }
