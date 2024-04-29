@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,28 +14,31 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-type EventHandler struct {
-	subscribers         []Subscriber
+type AwsEventHandler struct {
+	subscribers         []Resource
 	MaxProcessorThreads int
 }
 
-func (e *EventHandler) fetchMessages(c <-chan os.Signal) {
+func (e *AwsEventHandler) fetchMessages(c <-chan os.Signal) {
 	messagesChannel := make(chan types.Message, 20)
 	for i := 0; i < e.MaxProcessorThreads; i++ {
 		go e.Notify(messagesChannel)
 	}
 
+	slog.Info("ready to recieve messages")
+
 	for {
 		select {
 		case <-c:
+			slog.Info("recieved kill or interupt signal")
 			slog.Info("waiting for messages in flight to process...")
 			for len(messagesChannel) > 0 {
 				time.Sleep(200 * time.Millisecond)
 				slog.Info("waiting..")
 			}
-			slog.Info("done")
+			slog.Info("processed messages in flight")
 			defer close(messagesChannel)
-			slog.Info("message handler process ended")
+			slog.Info("main process ended")
 			return
 		default:
 			messages, err := sqs.GetMessages()
@@ -50,7 +54,7 @@ func (e *EventHandler) fetchMessages(c <-chan os.Signal) {
 	}
 }
 
-func (e *EventHandler) Register(sub Subscriber) error {
+func (e *AwsEventHandler) Register(sub Resource) error {
 	for _, s := range e.subscribers {
 		if reflect.DeepEqual(sub, s) {
 			return fmt.Errorf("subscriber already exists")
@@ -60,7 +64,7 @@ func (e *EventHandler) Register(sub Subscriber) error {
 	return nil
 }
 
-func (e *EventHandler) DeRegister(sub Subscriber) error {
+func (e *AwsEventHandler) DeRegister(sub Subscriber) error {
 	for i, s := range e.subscribers {
 		if reflect.DeepEqual(sub, s) {
 			e.subscribers[i] = e.subscribers[len(e.subscribers)-1]
@@ -71,11 +75,11 @@ func (e *EventHandler) DeRegister(sub Subscriber) error {
 	return fmt.Errorf("subscriber not found")
 }
 
-func (e *EventHandler) Notify(messages <-chan types.Message) {
+func (e *AwsEventHandler) Notify(messages <-chan types.Message) {
 	for {
 		select {
 		case message := <-messages:
-			fmt.Println(*message.Body)
+			e.filterEvents(message.Body)
 			err := sqs.DeleteMessage(message.ReceiptHandle)
 			if err != nil {
 				slog.Error("unable to delete the message: ", err)
@@ -85,9 +89,27 @@ func (e *EventHandler) Notify(messages <-chan types.Message) {
 	}
 }
 
-func (e *EventHandler) Run() {
+func (e *AwsEventHandler) filterEvents(message *string) error {
+	var event Ec2Event
+	err := json.Unmarshal([]byte(*message), &event)
+	if err != nil {
+		return err
+	}
+	for _, sub := range e.subscribers {
+		if event.Source == sub.GetEventType() {
+			sub.HandleEvent(&event)
+			return nil
+		}
+	}
+	return fmt.Errorf("unable to match the event")
+}
+
+func (e *AwsEventHandler) Run() {
+	slog.Info("setting up kill and interupt signal handlers...")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
+	slog.Info("created kill and interupt signal handlers")
+	slog.Info("starting the main process...")
 	e.fetchMessages(c)
 	defer close(c)
 }

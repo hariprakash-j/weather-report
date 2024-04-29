@@ -3,16 +3,16 @@ package handler
 type Publisher interface {
 	Register(sub Subscriber) error
 	Deregister(sub Subscriber) error
-	Notify()
+	Notify(messages <-chan interface{})
 }
 
 type Subscriber interface {
-	HandleEvent() error
+	HandleEvent(data interface{}) error
 }
 
 type Resource interface {
 	Subscriber
-	GetEventType() (string, error)
+	GetEventType() string
 }
 
 type Handler interface {

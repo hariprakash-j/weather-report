@@ -3,8 +3,12 @@ package main
 import "weather-report/handler"
 
 func main() {
-	handler := handler.EventHandler{
+	awsHandler := handler.AwsEventHandler{
 		MaxProcessorThreads: 10,
 	}
-	handler.Run()
+	// register handlers
+	awsHandler.Register(
+		&handler.Ec2Handler{EventType: "weather-report.test1"},
+	)
+	awsHandler.Run()
 }
