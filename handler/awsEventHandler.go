@@ -10,8 +10,6 @@ import (
 	"syscall"
 	"time"
 	"weather-report/cloud/aws/sqs"
-
-	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 type AwsEventHandler struct {
@@ -19,10 +17,31 @@ type AwsEventHandler struct {
 	MaxProcessorThreads int
 }
 
-func (e *AwsEventHandler) fetchMessages(c <-chan os.Signal) {
-	messagesChannel := make(chan types.Message, 20)
+func (e *AwsEventHandler) handleSucess(sucess <-chan *Message) {
+	for {
+		select {
+		case message := <-sucess:
+			slog.Info(
+				fmt.Sprintf("deleting the message %v from the queue...", message.Event.Detail),
+			)
+			err := sqs.DeleteMessage(message.QueueMessage.ReceiptHandle)
+			if err != nil {
+				slog.Error(fmt.Sprintf("unable to delete the message: %s", err))
+			}
+			slog.Info(fmt.Sprintf("deleted the message %v from the queue", message.Event.Detail))
+		default:
+		}
+	}
+}
+
+func (e *AwsEventHandler) processMessages(c <-chan os.Signal) {
+	messagesChannel := make(chan *Message, 20)
+	sucessChannel := make(chan *Message, 20)
+	// failureChannel := make(chan *Message, 20)
 	for i := 0; i < e.MaxProcessorThreads; i++ {
-		go e.Notify(messagesChannel)
+		go e.handleSucess(sucessChannel)
+		go e.Notify(messagesChannel, sucessChannel)
+		// go e.Notify(messagesChannel, sucessChannel, failureChannel)
 	}
 
 	slog.Info("ready to recieve messages")
@@ -32,22 +51,35 @@ func (e *AwsEventHandler) fetchMessages(c <-chan os.Signal) {
 		case <-c:
 			slog.Info("recieved kill or interupt signal")
 			slog.Info("waiting for messages in flight to process...")
-			for len(messagesChannel) > 0 {
+			// for len(messagesChannel) > 0 || len(sucessChannel) > 0 || len(failureChannel) > 0 {
+			for len(messagesChannel) > 0 || len(sucessChannel) > 0 {
 				time.Sleep(200 * time.Millisecond)
 				slog.Info("waiting..")
 			}
 			slog.Info("processed messages in flight")
-			defer close(messagesChannel)
+			defer func() {
+				close(messagesChannel)
+				close(sucessChannel)
+				// close(failureChannel)
+			}()
 			slog.Info("main process ended")
 			return
 		default:
-			messages, err := sqs.GetMessages()
+			sqsMessages, err := sqs.GetMessages()
 			if err != nil {
 				slog.Error("unable to get messages: ", err)
 			}
-			if len(*messages) > 0 {
-				for _, message := range *messages {
-					messagesChannel <- message
+			if len(*sqsMessages) > 0 {
+				for _, m := range *sqsMessages {
+					event, err := e.unmarshalEvent(m.Body)
+					message := Message{
+						Event:        event,
+						QueueMessage: &m,
+					}
+					if err != nil {
+						continue
+					}
+					messagesChannel <- &message
 				}
 			}
 		}
@@ -75,29 +107,38 @@ func (e *AwsEventHandler) DeRegister(sub Subscriber) error {
 	return fmt.Errorf("subscriber not found")
 }
 
-func (e *AwsEventHandler) Notify(messages <-chan types.Message) {
+func (e *AwsEventHandler) Notify(
+	message <-chan *Message,
+	sucess chan<- *Message,
+) {
 	for {
 		select {
-		case message := <-messages:
-			e.filterEvents(message.Body)
-			err := sqs.DeleteMessage(message.ReceiptHandle)
+		case message := <-message:
+			err := e.sendEvents(message.Event)
 			if err != nil {
-				slog.Error("unable to delete the message: ", err)
+				// failure <- message
+				slog.Error("send event failed")
+				continue
 			}
+			sucess <- message
 		default:
 		}
 	}
 }
 
-func (e *AwsEventHandler) filterEvents(message *string) error {
-	var event Ec2Event
+func (e *AwsEventHandler) unmarshalEvent(message *string) (*Event, error) {
+	var event Event
 	err := json.Unmarshal([]byte(*message), &event)
 	if err != nil {
-		return err
+		return &event, err
 	}
+	return &event, nil
+}
+
+func (e *AwsEventHandler) sendEvents(event *Event) error {
 	for _, sub := range e.subscribers {
 		if event.Source == sub.GetEventType() {
-			sub.HandleEvent(&event)
+			sub.HandleEvent(event)
 			return nil
 		}
 	}
@@ -110,6 +151,6 @@ func (e *AwsEventHandler) Run() {
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
 	slog.Info("created kill and interupt signal handlers")
 	slog.Info("starting the main process...")
-	e.fetchMessages(c)
+	e.processMessages(c)
 	defer close(c)
 }
