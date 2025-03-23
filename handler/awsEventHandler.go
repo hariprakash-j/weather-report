@@ -9,11 +9,14 @@ import (
 	"reflect"
 	"syscall"
 	"time"
-	"weather-report/cloud/aws/sqs"
+	"weather-report/abstractions"
+
+	sqsTypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 type AwsEventHandler struct {
-	subscribers         []Resource
+	Queue               abstractions.Queue[sqsTypes.Message, string, int32]
+	Subscribers         []Resource
 	MaxProcessorThreads int
 }
 
@@ -24,7 +27,7 @@ func (e *AwsEventHandler) handleSucess(sucess <-chan *Message) {
 			slog.Info(
 				fmt.Sprintf("deleting the message %v from the queue...", message.Event.Detail),
 			)
-			err := sqs.DeleteMessage(message.QueueMessage.ReceiptHandle)
+			err := e.Queue.DeleteMessage(message.QueueMessage.ReceiptHandle)
 			if err != nil {
 				slog.Error(fmt.Sprintf("unable to delete the message: %s", err))
 			}
@@ -65,7 +68,7 @@ func (e *AwsEventHandler) processMessages(c <-chan os.Signal) {
 			slog.Info("main process ended")
 			return
 		default:
-			sqsMessages, err := sqs.GetMessages()
+			sqsMessages, err := e.Queue.GetMessages(10)
 			if err != nil {
 				slog.Error("unable to get messages: ", err)
 			}
@@ -87,20 +90,20 @@ func (e *AwsEventHandler) processMessages(c <-chan os.Signal) {
 }
 
 func (e *AwsEventHandler) Register(sub Resource) error {
-	for _, s := range e.subscribers {
+	for _, s := range e.Subscribers {
 		if reflect.DeepEqual(sub, s) {
 			return fmt.Errorf("subscriber already exists")
 		}
 	}
-	e.subscribers = append(e.subscribers, sub)
+	e.Subscribers = append(e.Subscribers, sub)
 	return nil
 }
 
 func (e *AwsEventHandler) DeRegister(sub Subscriber) error {
-	for i, s := range e.subscribers {
+	for i, s := range e.Subscribers {
 		if reflect.DeepEqual(sub, s) {
-			e.subscribers[i] = e.subscribers[len(e.subscribers)-1]
-			e.subscribers = e.subscribers[:len(e.subscribers)-1]
+			e.Subscribers[i] = e.Subscribers[len(e.Subscribers)-1]
+			e.Subscribers = e.Subscribers[:len(e.Subscribers)-1]
 			return nil
 		}
 	}
@@ -136,7 +139,7 @@ func (e *AwsEventHandler) unmarshalEvent(message *string) (*Event, error) {
 }
 
 func (e *AwsEventHandler) sendEvents(event *Event) error {
-	for _, sub := range e.subscribers {
+	for _, sub := range e.Subscribers {
 		if event.Source == sub.GetEventType() {
 			sub.HandleEvent(event)
 			return nil
